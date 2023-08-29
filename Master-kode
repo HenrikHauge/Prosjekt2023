@@ -1,0 +1,152 @@
+// Inkluderer nødvendige bibliotker
+#include <Wire.h>
+#include <SPI.h>
+
+#define ESP32_SLAVE_ADDRESS 0x55 // I2C-adresse for ESP32 Slave
+#define MAX_UPDATE_DELAY 10000 // Definerer en variabel på 10 sekunder, som skal brukes til å få en oppdatering hvert 10sekund
+
+int lysData; // Variabel for å lagre data fra lys sensoren
+int temperaturePin = 2; // Temperatur pin
+int location = 0; // En global variabel for sensor dataen fra slaven 
+
+float referenceVoltage = 3.3; // Spenningsreferanse på 3.3V
+float temperatureOffset = 0.400; // fin justert Justeringsverdi for temperatur
+
+unsigned long lastUpdateTime = 0; // Variabel for å lagre tidspunktet for siste deteksjon
+unsigned long updateDelay = 1000; // Tidsforsinkelse på 1 sekund, for å kunne styre konverteringene
+
+boolean convertingUpdate = false; // Variabel som indikerer om det er på tide med en oppdatering
+boolean runConverting = false; // Variabel som indikerer at konverteringen skal kjøres
+
+void setup() 
+{
+  Serial.begin(9600); // Åpne seriell kommunikasjon for feilsøking
+
+  pinMode(SS, OUTPUT);
+  pinMode(4, OUTPUT);
+  digitalWrite(4, HIGH);
+
+  SPI.begin(); // Starter SPI kommunikasjonen
+  SPI.setClockDivider(SPI_CLOCK_DIV8);    // Setter klokken for SPI kommunikasjonen til 8 (16/8=2Mhz)
+
+  Wire.begin(0x08); // Angi I2C-adresse for Master ESP32
+  Wire.onReceive(recivedData); // Definerer funksjonen som skal kalles opp når slave sender data
+
+  convertingUpdate = true; // Starter prossesen med å sjekke om det er på tide med en oppdatering
+}
+
+void runningSPI()
+{
+  byte Mastersend,Mastereceive; 
+
+  digitalWrite(SS, LOW); // Starter kommunikasjonen med slaven, ved å senke SS-pinnen
+
+  Mastersend = 1; // Sender 1, som beskjed om at slave skal sende over data
+  
+  Mastereceive=SPI.transfer(Mastersend); // Sender Mastersend og mottar data fra slaven 
+
+  digitalWrite(SS, HIGH); // Avslutter kommunikasjonen med slaven, ved å heve SS-pinnen
+
+  lysData = map(Mastereceive, 0, 255, 0, 1023); // Konverterer den mottatte verdien til ett tall mellom 0 og 1023
+  Serial.println(lysData);
+
+  String resultat; // Variabelen som skal inneholde resultatet
+
+  // Sjekker verdien på lysData, og printer en beskjed ut i fra verdien
+  if (lysData >= 0 && lysData <= 50) 
+  {
+    resultat = "Lyset er av";
+  } 
+  else if (lysData >= 51 && lysData <= 150) 
+  {
+    resultat = "Lyset er svakt";
+  } 
+  else 
+  {
+    resultat = "Lyset er på!";
+  }
+  Serial.print(resultat);
+  Serial.print(", ");
+}
+
+void recivedData(int byteCount) 
+{
+  while (Wire.available()) // Leser data fra slaven, så lenge det er tilgjengelig 
+  {
+    int slaveData = Wire.read(); // Lagrer data fra slaven i en lokal int
+
+    location = slaveData; // Lagrer data fra den lokale til en global int
+
+    convertingTriggerd(); // Data er mottatt så iverksetter konverteringen
+  }
+}
+
+void convertingTriggerd()
+{
+  // Sjekker det er på tide med en oppdatering
+  if (convertingUpdate)
+  {
+    // Sjekker om det har gått nok tid siden siste oppdatering
+    unsigned long current_time = millis();
+    if (current_time - lastUpdateTime >= updateDelay)
+    {
+      lastUpdateTime = current_time; // Oppdater tidspunktet for siste deteksjon
+      runConverting = true; // Setter flagget til true for å iverksette konverteringen
+    }
+  }
+}
+
+String convertLocationToString (int location)
+{
+  switch (location)
+  {
+    // Gjør om dataen fra int - 0 til string - Kjøkken
+    case 0:
+      return "Kjøkkenet";
+      break;
+    // Gjør om dataen fra int - 1 til string - Stue
+    case 1:
+      return "Stuen";
+      break;
+  }
+}
+
+void finalConverting()
+{
+  String locationString = convertLocationToString(location); // Konverterer int til String
+  Serial.print(locationString);
+  Serial.print(", ");
+}
+
+void tempReading()
+{
+  int sensorValue = analogRead(temperaturePin); // Leser analogt verdi fra TMP36-sensoren
+  float voltage = (sensorValue / 4095.0) * referenceVoltage; // Konverterer analog verdi til spenning
+  int temperature = (voltage - temperatureOffset) * 100; // Konverterer spenning til temperatur i Celsius
+
+  String tempString = String(temperature); // Konverterer int til String
+  Serial.println(tempString);
+}
+
+void loop() 
+{
+//Sørger for en oppdatering minimum hvert 10 sekund
+unsigned long current_time = millis();
+if (current_time - lastUpdateTime >= MAX_UPDATE_DELAY) {
+    lastUpdateTime = current_time; // Oppdater tidspunktet for siste oppdatering
+    runConverting = true; // Setter flagget til true for å iverksette konverteringen
+  }
+
+  // Sjekker om triggingen av sensoren gikk gjennom, "tidstesten"
+  if (runConverting)
+  {
+    // Kaller opp funksjonene for å få printet data
+    runningSPI();
+    finalConverting();
+    tempReading();
+    
+   
+    runConverting = false; // Setter flagget tilbake for å indikere at konverteringen er ferdig
+  }
+}
+  
