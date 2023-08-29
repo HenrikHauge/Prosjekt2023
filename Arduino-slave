@@ -1,0 +1,55 @@
+#include<SPI.h>
+
+unsigned long lastRunTime = 0; // Variabel for å lagre tidspunktet for siste oppdatering
+unsigned long runDelay = 1000; // Tidsforsinkelse på 1 sekund, for at Arduinoen skal slippe å oppdatere lysstyrken konstant
+
+volatile boolean received; // Boolsk variabel som angir om det er mottatt data fra Master
+volatile byte Slavereceived,Slavesend; // To byte variabler som brukes til kommunikasjon med Master
+
+int photoPin = A0;
+int x;
+
+void setup()
+{
+  Serial.begin(9600);
+
+  pinMode(MISO,OUTPUT); // Setter MISO til OUTPUT
+
+  SPCR |= _BV(SPE); // Skrur på SPI, i slave modus
+
+  received = false;
+
+  SPI.attachInterrupt(); // Aktiverer interrupt for SPI - kommunikasjon
+}
+
+ISR (SPI_STC_vect) //Inerrrput rutine funksjon, som utføres når data mottas over SPI
+{                 
+  Slavereceived = SPDR; // Verdi mottatt fra master lagres i variabelen Slavereceived
+
+  received = true; // Setter received som sann, for å indikere at data er mottatt
+}
+
+void sendLightSensor()
+{
+  if(received)
+  {                           
+    int light = analogRead(photoPin); // Leser data fra lyssensoren
+    
+    Slavesend= light;                           
+
+    SPDR = Slavesend; // Sender verdien av "Slavesend" til masteren via SPDR (SPI Data Register)
+    Serial.println(light);
+  }
+}
+
+void loop()
+{ 
+  // Sjekker om det er gått lang nok tid siden sist oppdatering
+  unsigned long current_time = millis();
+  if (current_time - lastRunTime >= runDelay)
+  {
+    lastRunTime = current_time; // Oppdater tidspunktet for siste deteksjon
+    sendLightSensor(); // Kjører funksjonen og sender data til Master
+  }
+}
+
